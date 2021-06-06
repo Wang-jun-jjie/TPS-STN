@@ -1,2 +1,5 @@
 # dataset
-data/
+/mnist_png
+/mnist_dis
+/mnist_stn
+/checkpoint
