@@ -3,3 +3,6 @@
 /mnist_dis
 /mnist_stn
 /checkpoint
+
+# tmp
+/.ipynb*
