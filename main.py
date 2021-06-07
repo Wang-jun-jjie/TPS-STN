@@ -26,7 +26,7 @@ parser.add_argument('--sess',             default='default',   type=str,   help=
 parser.add_argument('--seed',             default=70082353,    type=int,   help='random seed')
 parser.add_argument('--batch_size', '-b', default=64,       type=int,   help='mini-batch size (default: 8)')
 parser.add_argument('--epochs',           default=20,          type=int,   help='number of total epochs to run')
-parser.add_argument('--n-grid-density', '-g',default=5,          type=int,   help='number control point by side')
+parser.add_argument('--n-grid-density', '-g',default=4,          type=int,   help='number control point by side')
 parser.add_argument('--image-size',       default=28,          type=int,   help='input image size (default: 28 for MNIST)')
 parser.add_argument('--data-directory',   default='./mnist_dis',type=str, help='dataset inputs root directory')
 parser.add_argument('--output_directory', default='./mnist_stn',type=str, help='dataset outputs root directory')
@@ -57,10 +57,9 @@ class localizer(nn.Module):
         super(localizer, self).__init__()
         self.args = args
         n_output = args.n_grid_density**2 *2
-        self.conv1 = nn.Conv2d(1, 10, kernel_size=5)
-        self.conv2 = nn.Conv2d(10, 20, kernel_size=5)
-        self.conv2_drop = nn.Dropout2d()
-        self.fc1 = nn.Linear(320, 50)
+        self.conv1 = nn.Conv2d(1, 8, kernel_size=7)
+        self.conv2 = nn.Conv2d(8, 16, kernel_size=5)
+        self.fc1 = nn.Linear(144, 50)
         self.fc2 = nn.Linear(50, n_output)
         # insert control point as bias
         bias = torch.flatten(source_points)
@@ -69,10 +68,9 @@ class localizer(nn.Module):
 
     def forward(self, x):
         x = F.relu(F.max_pool2d(self.conv1(x), 2))
-        x = F.relu(F.max_pool2d(self.conv2_drop(self.conv2(x)), 2))
-        x = x.view(-1, 320)
+        x = F.relu(F.max_pool2d(self.conv2(x), 2))
+        x = x.view(-1, 144)
         x = F.relu(self.fc1(x))
-        x = F.dropout(x, training=self.training)
         x = self.fc2(x)
         # x = torch.tanh(x) # bounded
         return x.view(self.args.batch_size, -1, 2)
@@ -80,21 +78,19 @@ class localizer(nn.Module):
 class affine_localizer(nn.Module):
     def __init__(self, args):
         super(affine_localizer, self).__init__()
-        self.conv1 = nn.Conv2d(1, 10, kernel_size=5)
-        self.conv2 = nn.Conv2d(10, 20, kernel_size=5)
-        self.conv2_drop = nn.Dropout2d()
-        self.fc1 = nn.Linear(320, 50)
-        self.fc2 = nn.Linear(50, 6)
+        self.conv1 = nn.Conv2d(1, 8, kernel_size=7)
+        self.conv2 = nn.Conv2d(8, 10, kernel_size=5)
+        self.fc1 = nn.Linear(10*3*3, 32)
+        self.fc2 = nn.Linear(32, 6)
         # Initialize the weights/bias with identity transformation
-        self.fc2.bias.data.copy_(torch.tensor([0.5, 0, 0, 0, 0.5, 0], dtype=torch.float).to(device))
+        self.fc2.bias.data.copy_(torch.tensor([1, 0, 0, 0, 1, 0], dtype=torch.float).to(device))
         self.fc2.weight.data.zero_()
 
     def forward(self, x):
         x = F.relu(F.max_pool2d(self.conv1(x), 2))
-        x = F.relu(F.max_pool2d(self.conv2_drop(self.conv2(x)), 2))
-        x = x.view(-1, 320)
+        x = F.relu(F.max_pool2d(self.conv2(x), 2))
+        x = x.view(-1, 10*3*3)
         x = F.relu(self.fc1(x))
-        x = F.dropout(x, training=self.training)
         x = self.fc2(x)
         return x
 
@@ -173,7 +169,9 @@ class tps_stn(nn.Module):
 
         self.follower = follower(args)
         self.localizer = localizer(args, src_points)
+        self.localizer2 = localizer(args, src_points)
         self.affine_localizer = affine_localizer(args)
+        self.affine_localizer2 = affine_localizer(args)
         self.tps_warper = tps_warper(args, src_points)
         self.affine_warper = affine_warper(args)
         # self.tps_warper = tps_warper(args, self.src_points)
@@ -185,10 +183,10 @@ class tps_stn(nn.Module):
         return src_points_2d
         
     def stn(self, x):
-        kernel_points = self.localizer(x)
         theta = self.affine_localizer(x).view(-1, 2, 3)
-        warped_x = self.tps_warper(x, kernel_points)
-        warped_x = self.affine_warper(warped_x, theta)
+        warped_x = self.affine_warper(x, theta)
+        kernel_points = self.localizer(warped_x)
+        warped_x = self.tps_warper(warped_x, kernel_points)
         return warped_x
         
     def forward(self, x):
